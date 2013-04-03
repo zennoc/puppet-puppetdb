@@ -22,6 +22,8 @@ class puppetdb::params {
   $db_user = 'puppetdb'
   $db_password = fqdn_rand(100000000000)
 
+  $install_prerequisites = true
+
   ### Application related parameters
 
   $package = $::operatingsystem ? {
@@ -89,7 +91,7 @@ class puppetdb::params {
     default => '/var/log/puppetdb/puppetdb.log',
   }
 
-  $port = '8081'
+  $port = '8080'
   $protocol = 'tcp'
 
   # General Settings
@@ -108,7 +110,7 @@ class puppetdb::params {
   ### General module variables that can have a site or per module default
   $monitor = false
   $monitor_tool = ''
-  $monitor_target = $::ipaddress
+  $monitor_target = '127.0.0.1'
   $firewall = false
   $firewall_tool = ''
   $firewall_src = '0.0.0.0/0'
