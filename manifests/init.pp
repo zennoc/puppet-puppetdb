@@ -207,17 +207,32 @@
 # [*log_file*]
 #   Log file(s). Used by puppi
 #
-# [*port*]
-#   The listening port, if any, of the service.
+# [*https_host*]
+#   Defines which interface the https service is available on.
+#   Defaults to $::fqdn, which means to serve https to all, which is probably what you want.
+#
+# [*https_port*]
+#   The listening port, for HTTPS.
 #   This is used by monitor, firewall and puppi (optional) components
-#   Note: This doesn't necessarily affect the service configuration file
-#   Can be defined also by the (top scope) variable $puppetdb_port
+#   Can be defined also by the (top scope) variable $puppetdb_https_port
+#   Defaults to '8081'
+#
+# [*http_host*]
+#   Set this to enable plain http on the host you choose.
+#   Set to 'localhost' to only allow access from the same machine, or to $::fqdn to allow access from anywhere
+#   Defaults to '', which means to not serve plain http, in line with the puppetdb default settings.
+#
+# [*http_port*]
+#   The listening port, if any, of the service for plain HTTP.
+#   This is used by monitor, firewall and puppi (optional) components
+#   Can be defined also by the (top scope) variable $puppetdb_http_port
+#   If $http_host is left empty, this argument has no effect.
+#   Defaults to '8080'
 #
 # [*protocol*]
 #   The protocol used by the the service.
 #   This is used by monitor, firewall and puppi (optional) components
 #   Can be defined also by the (top scope) variable $puppetdb_protocol
-#
 #
 # == Examples
 #
@@ -277,7 +292,10 @@ class puppetdb (
   $data_dir            = params_lookup( 'data_dir' ),
   $log_dir             = params_lookup( 'log_dir' ),
   $log_file            = params_lookup( 'log_file' ),
-  $port                = params_lookup( 'port' ),
+  $https_host          = params_lookup( 'https_host' ),
+  $https_port          = params_lookup( 'https_port' ),
+  $http_host           = params_lookup( 'http_host' ),
+  $http_port           = params_lookup( 'http_port' ),
   $protocol            = params_lookup( 'protocol' )
   ) inherits puppetdb::params {
 
@@ -368,12 +386,30 @@ class puppetdb (
     ensure => $puppetdb::manage_package,
     name   => $puppetdb::package,
   }
-  
+
+  if inline_template('<%= scope.lookupvar("::puppetdbversion")?1:0 %>') {
+    $puppetdbversion = $::puppetdbversion
+  } else {
+    $puppetdbversion = '1.5'
+  }
+
   # This runs while installing the package
   # but if something kills the keystore
-  # we have to regenerate it. 
-  exec { "/usr/sbin/puppetdb-ssl-setup":
-    creates => '/etc/puppetdb/ssl/keystore.jks',
+  # we have to regenerate it.
+  if versioncmp("$puppetdbversion", '1.4') == -1 {
+    $ssl_setup_creates = '/etc/puppetdb/ssl/keystore.jks'
+  } else {
+    $ssl_setup_creates = '/etc/puppetdb/ssl/private.pem'
+    file {'/etc/puppetdb/conf.d/jetty.ini':
+      ensure  => $puppetdb::manage_file,
+      content => template('puppetdb/jetty.ini.erb'),
+      require => Package['puppetdb'],
+      notify  => Service['puppetdb'],
+    }
+  }
+  exec { '/usr/sbin/puppetdb-ssl-setup':
+    creates => $ssl_setup_creates,
+    notify  => Service['puppetdb'],
     require => Package['puppetdb'];
   }
 
@@ -435,12 +471,23 @@ class puppetdb (
 
   ### Service monitoring, if enabled ( monitor => true )
   if $puppetdb::bool_monitor == true {
-    monitor::port { "puppetdb_${puppetdb::protocol}_${puppetdb::port}":
-      protocol => $puppetdb::protocol,
-      port     => $puppetdb::port,
-      target   => $puppetdb::monitor_target,
-      tool     => $puppetdb::monitor_tool,
-      enable   => $puppetdb::manage_monitor,
+    if ($puppetdb::http_host != 'localhost' and $puppetdb::http_host != '') {
+      monitor::port { "puppetdb_${puppetdb::protocol}_${puppetdb::http_port}":
+        protocol => $puppetdb::protocol,
+        port     => $puppetdb::http_port,
+        target   => $puppetdb::monitor_target,
+        tool     => $puppetdb::monitor_tool,
+        enable   => $puppetdb::manage_monitor,
+      }
+    }
+    if ($puppetdb::https_host != 'localhost' and $puppetdb::https_host != '') {
+      monitor::port { "puppetdb_${puppetdb::protocol}_${puppetdb::https_port}":
+        protocol => $puppetdb::protocol,
+        port     => $puppetdb::https_port,
+        target   => $puppetdb::monitor_target,
+        tool     => $puppetdb::monitor_tool,
+        enable   => $puppetdb::manage_monitor,
+      }
     }
     monitor::process { 'puppetdb_process':
       process  => $puppetdb::process,
@@ -456,15 +503,29 @@ class puppetdb (
 
   ### Firewall management, if enabled ( firewall => true )
   if $puppetdb::bool_firewall == true {
-    firewall { "puppetdb_${puppetdb::protocol}_${puppetdb::port}":
-      source      => $puppetdb::firewall_src,
-      destination => $puppetdb::firewall_dst,
-      protocol    => $puppetdb::protocol,
-      port        => $puppetdb::port,
-      action      => 'allow',
-      direction   => 'input',
-      tool        => $puppetdb::firewall_tool,
-      enable      => $puppetdb::manage_firewall,
+    if ($puppetdb::http_host != 'localhost' and $puppetdb::http_host != '') {
+      firewall { "puppetdb_${puppetdb::protocol}_${puppetdb::http_port}":
+        source      => $puppetdb::firewall_src,
+        destination => $puppetdb::firewall_dst,
+        protocol    => $puppetdb::protocol,
+        port        => $puppetdb::http_port,
+        action      => 'allow',
+        direction   => 'input',
+        tool        => $puppetdb::firewall_tool,
+        enable      => $puppetdb::manage_firewall,
+      }
+    }
+    if ($puppetdb::https_host != 'localhost' and $puppetdb::https_host != '') {
+      firewall { "puppetdb_${puppetdb::protocol}_${puppetdb::https_port}":
+        source      => $puppetdb::firewall_src,
+        destination => $puppetdb::firewall_dst,
+        protocol    => $puppetdb::protocol,
+        port        => $puppetdb::https_port,
+        action      => 'allow',
+        direction   => 'input',
+        tool        => $puppetdb::firewall_tool,
+        enable      => $puppetdb::manage_firewall,
+      }
     }
   }
 
@@ -495,3 +556,5 @@ class puppetdb (
   }
 
 }
+# vim:shiftwidth=2:tabstop=2:softtabstop=2:expandtab:smartindent
+
