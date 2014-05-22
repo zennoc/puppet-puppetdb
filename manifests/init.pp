@@ -6,6 +6,10 @@
 # == Parameters
 #
 # Module specific parameters
+#
+# [*jetty_template*]
+#   Sets the path to the template to use as content for jetty configuration file
+#
 # [*db_type*]
 #   The type of backed DB to use: hsqldb (default) or postgresql
 #
@@ -247,6 +251,7 @@
 #   Alessandro Franceschi <al@lab42.it/>
 #
 class puppetdb (
+  $jetty_template      = params_lookup( 'jetty_template' ),
   $db_type             = params_lookup( 'db_type' ),
   $db_host             = params_lookup( 'db_host' ),
   $db_port             = params_lookup( 'db_port' ),
@@ -396,21 +401,23 @@ class puppetdb (
   # This runs while installing the package
   # but if something kills the keystore
   # we have to regenerate it.
-  if versioncmp("$puppetdbversion", '1.4') == -1 {
+  if versioncmp($puppetdbversion, '1.4') == -1 {
     $ssl_setup_creates = '/etc/puppetdb/ssl/keystore.jks'
   } else {
     $ssl_setup_creates = '/etc/puppetdb/ssl/private.pem'
     file {'/etc/puppetdb/conf.d/jetty.ini':
       ensure  => $puppetdb::manage_file,
-      content => template('puppetdb/jetty.ini.erb'),
+      content => template($jetty_template),
       require => Package['puppetdb'],
       notify  => Service['puppetdb'],
     }
   }
-  exec { '/usr/sbin/puppetdb-ssl-setup':
-    creates => $ssl_setup_creates,
-    notify  => Service['puppetdb'],
-    require => Package['puppetdb'];
+  if $puppetdb::bool_absent == false {
+    exec { '/usr/sbin/puppetdb-ssl-setup':
+      creates => $ssl_setup_creates,
+      notify  => Service['puppetdb'],
+      require => Package['puppetdb'];
+    }
   }
 
   service { 'puppetdb':
